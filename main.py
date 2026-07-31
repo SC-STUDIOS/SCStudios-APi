@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from scalar_fastapi import scalar_interface
@@ -26,6 +26,11 @@ app = FastAPI(
     version="4.0",
     description="API completa con búsqueda de servicios, plantilla de modelos, generador de PDF y Word con Código QR y formato administrativo local."
 )
+
+# Redirección automática desde la raíz para evitar "Not Found"
+@app.get("/", include_in_schema=False)
+async def root():
+    return RedirectResponse(url="/gui")
 
 # Interfaz gráfica limpia y moderna en /gui
 @app.get("/gui", include_in_schema=False)
