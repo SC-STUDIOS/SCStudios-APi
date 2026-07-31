@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pydantic
+python-multipart
+reportlab
+python-docx
+qrcode
+num2words
+Pillow
