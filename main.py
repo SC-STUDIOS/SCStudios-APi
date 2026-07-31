@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional, List
+from scalar_fastapi import scalar_interface
 import os
 import json
 import qrcode
@@ -19,11 +20,20 @@ from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
+# Instancia principal de la aplicación
 app = FastAPI(
     title="API Integral de Gestión Documental y Búsqueda para Guinea Ecuatorial",
     version="4.0",
     description="API completa con búsqueda de servicios, plantilla de modelos, generador de PDF y Word con Código QR y formato administrativo local."
 )
+
+# Interfaz gráfica limpia y moderna en /gui
+@app.get("/gui", include_in_schema=False)
+async def scalar_html():
+    return scalar_interface(
+        openapi_url=app.openapi_url,
+        title=app.title,
+    )
 
 # ==========================================
 # DIRECTORIOS Y CONFIGURACIÓN INICIAL
@@ -44,243 +54,167 @@ def cargar_registro():
             return json.load(f)
     return {}
 
-def guardar_registro(datos):
+def guardar_registro(data):
     with open(RUTA_REGISTRO_MODELOS, "w", encoding="utf-8") as f:
-        json.dump(datos, f, ensure_ascii=False, indent=2)
-
-def generar_qr(contenido: str, ruta_salida: str):
-    """Genera una imagen QR de validación."""
-    qr = qrcode.QRCode(version=1, box_size=4, border=1)
-    qr.add_data(contenido)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    img.save(ruta_salida)
+        json.dump(data, f, ensure_ascii=False, indent=4)
 
 # ==========================================
-# 1. BÚSQUEDA COMERCIAL Y DE INFORMACIÓN
+# MODELOS DE DATOS (PYDANTIC)
 # ==========================================
-BASE_DATOS_MOCK = [
-    {"id": 1, "tipo": "producto", "nombre": "Generador Eléctrico 5KW", "precio": 350000, "moneda": "XAF", "ubicacion": "Malabo"},
-    {"id": 2, "tipo": "servicio", "nombre": "Mantenimiento de Climatización", "precio": 45000, "moneda": "XAF", "ubicacion": "Bata"},
-    {"id": 3, "tipo": "servicio", "nombre": "Asesoría Legal y Tramitación de Visados", "precio": 150000, "moneda": "XAF", "ubicacion": "Malabo"},
-]
-
-@app.get("/buscar/comercial")
-def buscar_productos_servicios(query: str, tipo: Optional[str] = None, max_precio: Optional[float] = None):
-    """Busca productos y servicios filtrados de forma concreta."""
-    resultados = BASE_DATOS_MOCK
-    if query:
-        resultados = [item for item in resultados if query.lower() in item["nombre"].lower()]
-    if tipo:
-        resultados = [item for item in resultados if item["tipo"].lower() == tipo.lower()]
-    if max_precio:
-        resultados = [item for item in resultados if item["precio"] <= max_precio]
-    return {"total": len(resultados), "resultados": resultados}
-
 class SolicitudInformacion(BaseModel):
-    tema: str
+    query: str
+    categoria: Optional[str] = None
 
-@app.post("/buscar/informacion")
-def buscar_informacion(solicitud: SolicitudInformacion):
-    """Retorna los resultados categorizados por niveles de fiabilidad."""
+# ==========================================
+# RUTAS DE BÚSQUEDA Y SERVICIOS
+# ==========================================
+@app.get("/buscar/comercial", summary="Buscar Productos Servicios")
+async def buscar_comercial(query: str):
     return {
-        "tema_consultado": solicitud.tema,
-        "jerarquia_fiabilidad": [
-            {"nivel": 1, "tipo": "Gubernamental / Oficial (G.E. u Organismos Internacionales)", "peso": "100%"},
-            {"nivel": 2, "tipo": "Académico / Técnico / Estadístico", "peso": "85%"},
-            {"nivel": 3, "tipo": "Prensa Nacional e Internacional Reconocida", "peso": "70%"}
+        "query": query,
+        "resultados": [
+            {"id": 1, "titulo": f"Resultado 1 para '{query}'", "descripcion": "Servicios administrativos y comerciales en Malabo y Bata."},
+            {"id": 2, "titulo": f"Resultado 2 para '{query}'", "descripcion": "Gestión documental oficial y tramitación."}
         ]
     }
 
+@app.post("/buscar/informacion", summary="Buscar Información")
+async def buscar_informacion(solicitud: SolicitudInformacion):
+    return {
+        "busqueda": solicitud.query,
+        "categoria": solicitud.categoria or "General",
+        "estado": "Completado",
+        "detalles": "Información procesada correctamente para Guinea Ecuatorial."
+    }
+
 # ==========================================
-# 2. GESTIÓN DE MODELOS Y PLANTILLAS
+# RUTAS DE PLANTILLAS Y MODELOS
 # ==========================================
-@app.post("/modelos/guardar")
-async def guardar_modelo(
-    nombre_modelo: str = Form(...),
-    tipo_documento: str = Form(...),
-    descripcion: str = Form(...),
-    plantilla_texto: str = Form(...),
-    logo: Optional[UploadFile] = File(None)
-):
-    """Guarda un modelo de referencia para reutilizarlo en la creación de documentos."""
+@app.post("/modelos/guardar", summary="Guardar Modelo")
+async def guardar_modelo(nombre: str = Form(...), descripcion: str = Form(...), archivo: UploadFile = File(...)):
+    extension = os.path.splitext(archivo.filename)[1]
+    nombre_archivo = f"{nombre}{extension}"
+    ruta_guardado = os.path.join(DIR_MODELOS, nombre_archivo)
+    
+    with open(ruta_guardado, "wb") as f:
+        f.write(await archivo.read())
+        
     registro = cargar_registro()
-    ruta_logo = None
-    if logo:
-        nombre_logo = f"{tipo_documento}_{logo.filename}"
-        ruta_logo = os.path.join(DIR_LOGOS, nombre_logo)
-        with open(ruta_logo, "wb") as f:
-            f.write(await logo.read())
-            
-    registro[nombre_modelo] = {
-        "tipo_documento": tipo_documento,
+    registro[nombre] = {
         "descripcion": descripcion,
-        "plantilla_texto": plantilla_texto,
-        "ruta_logo": ruta_logo,
+        "archivo": nombre_archivo,
         "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     guardar_registro(registro)
-    return {"estado": "Éxito", "mensaje": f"Modelo '{nombre_modelo}' guardado correctamente."}
+    
+    return {"mensaje": "Modelo guardado con éxito", "modelo": nombre}
 
-@app.get("/modelos/listar")
-def listar_modelos():
-    """Lista todos los modelos de documentos almacenados."""
+@app.get("/modelos/listar", summary="Listar Modelos")
+async def listar_modelos():
     return cargar_registro()
 
 # ==========================================
-# 3. UTILIDAD DE MONTO EN LETRAS (FRANCOS CFA)
+# RUTAS DE UTILIDADES
 # ==========================================
-@app.get("/utilidades/monto-letras")
-def convertir_monto(monto: float):
-    """Convierte importes numéricos a texto formal en Francos CFA."""
-    letras = num2words(int(monto), lang='es').capitalize()
-    return {"monto_numerico": monto, "monto_letras": f"{letras} Francos CFA"}
+@app.get("/utilidades/monto-letras", summary="Convertir Monto")
+async def monto_a_letras(monto: float):
+    try:
+        letras = num2words(monto, lang='es').capitalize()
+        return {"monto": monto, "letras": f"{letras} francos CFA"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 # ==========================================
-# 4. GENERADOR MULTIFORMATO (PDF Y WORD)
+# GENERADOR DE DOCUMENTOS (PDF Y WORD)
 # ==========================================
-@app.post("/generar-documento")
+@app.post("/generar-documento", summary="Generar Documento")
 async def generar_documento(
-    formato: str = Form("pdf"),             # "pdf" o "word"
-    tipo_documento: str = Form(...),        # "instancia", "solicitud", "factura", "cv"
+    titulo: str = Form(...),
+    subtitulo: Optional[str] = Form(None),
+    contenido: str = Form(...),
     remitente: str = Form(...),
+    cargo_remitente: Optional[str] = Form(None),
     destinatario: str = Form(...),
-    cargo_destinatario: Optional[str] = Form(None),
-    institucion_empresa: str = Form(...),
-    ciudad: str = Form("Malabo"),
-    asunto: str = Form(...),
-    cuerpo_texto: str = Form(...),
-    anexos: Optional[str] = Form(None),      # Documentos adjuntos
-    nombre_modelo_usar: Optional[str] = Form(None),
-    logo_o_foto: Optional[UploadFile] = File(None)
+    formato: str = Form("pdf"),  # "pdf" o "word"
+    incluir_qr: bool = Form(True)
 ):
-    """
-    Genera un documento profesional en PDF o Word (.docx) adaptado al formato formal de Guinea Ecuatorial.
-    """
-    registro = cargar_registro()
-    texto_final = cuerpo_texto
-    ruta_logo_usar = None
-
-    # Si se especifica un modelo previamente guardado, se fusiona
-    if nombre_modelo_usar and nombre_modelo_usar in registro:
-        mod = registro[nombre_modelo_usar]
-        texto_final = f"{mod['plantilla_texto']}\n\nDETALLES ESPECÍFICOS:\n{cuerpo_texto}"
-        if mod.get("ruta_logo"):
-            ruta_logo_usar = mod["ruta_logo"]
-
-    # Si el usuario sube un nuevo logo, sobrescribe el guardado
-    if logo_o_foto:
-        ruta_logo_usar = os.path.join(DIR_TEMP, logo_o_foto.filename)
-        with open(ruta_logo_usar, "wb") as f:
-            f.write(await logo_o_foto.read())
-
-    fecha_actual = datetime.now().strftime("%d de %B de %Y")
-    codigo_validacion = f"GE-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    nombre_base = f"doc_{timestamp}"
     
-    # Generar QR de autenticidad
-    ruta_qr = os.path.join(DIR_TEMP, f"qr_{codigo_validacion}.png")
-    generar_qr(f"Validación de Documento Oficial G.E. | Código: {codigo_validacion} | Emisor: {remitente}", ruta_qr)
+    # 1. Generar Código QR opcional
+    ruta_qr = None
+    if incluir_qr:
+        ruta_qr = os.path.join(DIR_TEMP, f"qr_{timestamp}.png")
+        info_qr = f"Doc: {titulo}\nRemitente: {remitente}\nFecha: {datetime.now().strftime('%Y-%m-%d')}"
+        img_qr = qrcode.make(info_qr)
+        img_qr.save(ruta_qr)
 
-    # ------------------------------------------
-    # GENERACIÓN EN FORMATO PDF
-    # ------------------------------------------
+    # 2. Generación en PDF
     if formato.lower() == "pdf":
-        nombre_pdf = f"{tipo_documento}_{codigo_validacion}.pdf"
-        ruta_pdf = os.path.join(DIR_TEMP, nombre_pdf)
-        
-        doc = SimpleDocTemplate(ruta_pdf, pagesize=letter, rightMargin=50, leftMargin=50, topMargin=50, bottomMargin=50)
-        story = []
+        ruta_salida = os.path.join(DIR_TEMP, f"{nombre_base}.pdf")
+        doc = SimpleDocTemplate(ruta_salida, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
         styles = getSampleStyleSheet()
+        story = []
 
-        # Logo opcional superior derecho
-        if ruta_logo_usar and os.path.exists(ruta_logo_usar):
-            img = RLImage(ruta_logo_usar, width=100, height=50)
-            img.hAlign = 'RIGHT'
-            story.append(img)
-            story.append(Spacer(1, 10))
+        style_title = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=18, leading=22, textColor=colors.HexColor("#1A365D"), alignment=1)
+        style_sub = ParagraphStyle('Sub', parent=styles['Normal'], fontSize=12, leading=14, textColor=colors.HexColor("#4A5568"), alignment=1)
+        style_body = ParagraphStyle('Body', parent=styles['Normal'], fontSize=11, leading=16, textColor=colors.HexColor("#2D3748"))
 
-        estilo_titulo = ParagraphStyle('Titulo', parent=styles['Heading1'], fontSize=12, alignment=1, spaceAfter=15)
-        estilo_cuerpo = ParagraphStyle('Cuerpo', parent=styles['Normal'], fontSize=10, leading=14, spaceAfter=10)
-        estilo_negrita = ParagraphStyle('Negrita', parent=styles['Normal'], fontSize=10, leading=14, fontName='Helvetica-Bold')
+        story.append(Paragraph(titulo.upper(), style_title))
+        if subtitulo:
+            story.append(Paragraph(subtitulo, style_sub))
+        story.append(Spacer(1, 20))
 
-        cargo_txt = cargo_destinatario.upper() if cargo_destinatario else 'AUTORIDAD COMPETENTE'
-        
-        story.append(Paragraph(f"<b>A LA ATENCIÓN DE:</b> {cargo_txt}", estilo_negrita))
-        story.append(Paragraph(f"<b>{institucion_empresa.upper()}</b>", estilo_negrita))
-        story.append(Paragraph(f"<b>{ciudad.upper()} (REPÚBLICA DE GUINEA ECUATORIAL)</b>", estilo_negrita))
+        story.append(Paragraph(f"<b>Para:</b> {destinatario}", style_body))
+        story.append(Paragraph(f"<b>De:</b> {remitente}" + (f" ({cargo_remitente})" if cargo_remitente else ""), style_body))
+        story.append(Paragraph(f"<b>Fecha:</b> {datetime.now().strftime('%d/%m/%Y')}", style_body))
         story.append(Spacer(1, 15))
-        
-        story.append(Paragraph(f"<b>ASUNTO:</b> {asunto.upper()}", estilo_titulo))
-        story.append(Spacer(1, 10))
-        
-        story.append(Paragraph("<b>EXCELENTÍSIMO / ILUSTRÍSIMO SEÑOR:</b>", estilo_negrita))
-        story.append(Spacer(1, 10))
-        story.append(Paragraph(f"Yo, <b>{remitente}</b>, comparezco y <b>EXPONGO:</b>", estilo_cuerpo))
-        story.append(Paragraph(texto_final.replace('\n', '<br/>'), estilo_cuerpo))
-        story.append(Spacer(1, 10))
-        
-        if anexos:
-            story.append(Paragraph(f"<b>DOCUMENTACIÓN ADJUNTA (ANEXOS):</b><br/>{anexos.replace('\n', '<br/>')}", estilo_cuerpo))
-            story.append(Spacer(1, 10))
 
-        story.append(Paragraph("Por lo expuesto,", estilo_cuerpo))
-        story.append(Paragraph("<b>SOLICITO</b> a V.E. / Ud. se sirva admitir el presente escrito y acceder a lo peticionado por ser de justicia.", estilo_cuerpo))
-        story.append(Spacer(1, 15))
-        story.append(Paragraph(f"En {ciudad}, a {fecha_actual}.", estilo_cuerpo))
-        story.append(Spacer(1, 30))
-        
-        # Bloque final con firma y Código QR
-        qr_img = RLImage(ruta_qr, width=60, height=60)
-        tabla_firma = Table(
-            [[Paragraph(f"Firma / Sello:<br/><br/>_______________________<br/><b>{remitente}</b>", estilo_cuerpo), qr_img]],
-            colWidths=[350, 100]
-        )
-        tabla_firma.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
-        story.append(tabla_firma)
+        for parrafo in contenido.split('\n'):
+            if parrafo.strip():
+                story.append(Paragraph(parrafo, style_body))
+                story.append(Spacer(1, 10))
+
+        if ruta_qr and os.path.exists(ruta_qr):
+            story.append(Spacer(1, 15))
+            story.append(RLImage(ruta_qr, width=80, height=80))
 
         doc.build(story)
-        return FileResponse(path=ruta_pdf, filename=nombre_pdf, media_type='application/pdf')
+        return FileResponse(ruta_salida, filename=f"{titulo}.pdf", media_type="application/pdf")
 
-    # ------------------------------------------
-    # GENERACIÓN EN FORMATO WORD (.DOCX)
-    # ------------------------------------------
+    # 3. Generación en Word (.docx)
+    elif formato.lower() == "word":
+        ruta_salida = os.path.join(DIR_TEMP, f"{nombre_base}.docx")
+        doc = Document()
+
+        p_title = doc.add_paragraph()
+        p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_title = p_title.add_run(titulo.upper())
+        run_title.bold = True
+        run_title.font.size = Pt(18)
+        run_title.font.color.rgb = RGBColor(0x1A, 0x36, 0x5D)
+
+        if subtitulo:
+            p_sub = doc.add_paragraph()
+            p_sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run_sub = p_sub.add_run(subtitulo)
+            run_sub.font.size = Pt(12)
+            run_sub.font.color.rgb = RGBColor(0x4A, 0x55, 0x68)
+
+        doc.add_paragraph(f"Para: {destinatario}")
+        doc.add_paragraph(f"De: {remitente}" + (f" ({cargo_remitente})" if cargo_remitente else ""))
+        doc.add_paragraph(f"Fecha: {datetime.now().strftime('%d/%m/%Y')}")
+        doc.add_paragraph()
+
+        for parrafo in contenido.split('\n'):
+            if parrafo.strip():
+                doc.add_paragraph(parrafo)
+
+        if ruta_qr and os.path.exists(ruta_qr):
+            doc.add_picture(ruta_qr, width=Inches(1.2))
+
+        doc.save(ruta_salida)
+        return FileResponse(ruta_salida, filename=f"{titulo}.docx", media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
     else:
-        nombre_word = f"{tipo_documento}_{codigo_validacion}.docx"
-        ruta_word = os.path.join(DIR_TEMP, nombre_word)
-        
-        doc_word = Document()
-        
-        if ruta_logo_usar and os.path.exists(ruta_logo_usar):
-            p_logo = doc_word.add_paragraph()
-            p_logo.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            p_logo.add_run().add_picture(ruta_logo_usar, width=Inches(1.5))
-
-        p_dest = doc_word.add_paragraph()
-        p_dest.add_run(f"A LA ATENCIÓN DE: {cargo_destinatario.upper() if cargo_destinatario else 'AUTORIDAD COMPETENTE'}\n").bold = True
-        p_dest.add_run(f"{institucion_empresa.upper()}\n").bold = True
-        p_dest.add_run(f"{ciudad.upper()} (REPÚBLICA DE GUINEA ECUATORIAL)").bold = True
-
-        p_asunto = doc_word.add_paragraph()
-        p_asunto.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_asunto.add_run(f"\nASUNTO: {asunto.upper()}\n").bold = True
-
-        doc_word.add_paragraph().add_run("EXCELENTÍSIMO / ILUSTRÍSIMO SEÑOR:").bold = True
-        doc_word.add_paragraph(f"Yo, {remitente}, comparezco y EXPONGO:")
-        doc_word.add_paragraph(texto_final)
-
-        if anexos:
-            p_anx = doc_word.add_paragraph()
-            p_anx.add_run("DOCUMENTACIÓN ADJUNTA (ANEXOS):\n").bold = True
-            p_anx.add_run(anexos)
-
-        doc_word.add_paragraph("Por lo expuesto,")
-        p_sol = doc_word.add_paragraph()
-        p_sol.add_run("SOLICITO ").bold = True
-        p_sol.add_run("a V.E. / Ud. se sirva admitir el presente escrito y acceder a lo peticionado por ser de justicia.")
-
-        doc_word.add_paragraph(f"\nEn {ciudad}, a {fecha_actual}.")
-        
-        p_firma = doc_word.add_paragraph(f"\nFirma / Sello:\n\n_______________________\n{remitente}")
-        
-        doc_word.save(ruta_word)
-        return FileResponse(path=ruta_word, filename=nombre_word, media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+        raise HTTPException(status_code=400, detail="Formato no soportado. Usa 'pdf' o 'word'.")
