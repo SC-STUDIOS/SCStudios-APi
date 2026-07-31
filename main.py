@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 from typing import Optional, List
-from scalar_fastapi import scalar_interface
+from scalar_fastapi import get_scalar_api_reference
 import os
 import json
 import qrcode
@@ -32,10 +32,10 @@ app = FastAPI(
 async def root():
     return RedirectResponse(url="/gui")
 
-# Interfaz gráfica limpia y moderna en /gui
+# Interfaz gráfica limpia y moderna en /gui usando Scalar
 @app.get("/gui", include_in_schema=False)
 async def scalar_html():
-    return scalar_interface(
+    return get_scalar_api_reference(
         openapi_url=app.openapi_url,
         title=app.title,
     )
